@@ -1,0 +1,509 @@
+#!/bin/bash
+
+# wsgraphql <workflow_name> <request_args_name>
+
+ID_DELIM='|'
+DISTANCE=${3:-1}
+
+# Query requests
+read -r -d '' treeView <<_args_
+{
+  "request_string": "
+fragment treeNest on FamilyProxy {
+  name
+  cyclePoint
+  state
+  depth
+  childTasks(ghosts: true, ids: \$nIds, states: \$nStates, mindepth: \$minDepth, maxdepth: \$maxDepth) {
+    id
+    state
+    task {
+      meanElapsedTime
+    }
+    latestMessage
+    depth
+    jobs {
+      id
+      host
+      batchSysName
+      batchSysJobId
+      submittedTime
+      startedTime
+      finishedTime
+      submitNum
+      environment
+    }
+  }
+}
+
+query tree(\$wIds: [ID], \$nIds: [ID], \$nStates: [String], \$minDepth: Int, \$maxDepth: Int) {
+  workflows(ids: \$wIds) {
+    id
+    name
+    status
+    stateTotals
+    treeDepth
+    familyProxies(ghosts: true, ids: [\"root\"]) {
+      ...treeNest
+      childFamilies(ghosts: true, mindepth: \$minDepth, maxdepth: \$maxDepth) {
+        ...treeNest
+        childFamilies(ghosts: true, mindepth: \$minDepth, maxdepth: \$maxDepth) {
+          ...treeNest
+          childFamilies(ghosts: true, mindepth: \$minDepth, maxdepth: \$maxDepth) {
+            ...treeNest
+            childFamilies(ghosts: true, mindepth: \$minDepth, maxdepth: \$maxDepth) {
+              ...treeNest
+            }
+          }
+        }
+      }
+    }
+  }
+}",
+"variables": {
+    "wIds": ["*${ID_DELIM}${1}"],
+    "nIds": ["20*${ID_DELIM}*"],
+    "nStates": ["succeeded", "waiting", "held", "running"],
+    "minDepth": 0,
+    "maxDepth": 4
+  }
+}
+_args_
+
+read -r -d '' graphView <<_args_
+{"request_string": "
+fragment tProxy on TaskProxy {
+  state
+  cyclePoint
+  latestMessage
+  jobs {
+    id
+    state
+    host
+    batchSysName
+    batchSysJobId
+    submittedTime
+    startedTime
+    finishedTime
+    submitNum
+  }
+}
+
+fragment fProxy on FamilyProxy {
+  state
+  cyclePoint
+}
+
+query {
+  workflows {
+    name
+    edges {
+      edges {
+        source
+        sourceNode {
+          ...tProxy
+          ...fProxy
+        }
+        target
+        targetNode {
+          ...tProxy
+          ...fProxy
+        }
+        cond
+        suicide
+      }
+      workflowPollingTasks {
+        workflow
+        remoteProxy
+        reqState
+        graphString
+      }
+      leaves
+      feet
+    }
+  }
+ }",
+"variables": null}
+_args_
+
+read -r -d '' flatTree <<_args_
+{
+  "request_string": "
+query flatTree(\$wIds: [ID], \$tIds: [ID], \$nIds: [ID], \$nStates: [String], \$minDepth: Int, \$maxDepth: Int) {
+  workflows(ids: \$wIds) {
+    id
+    name
+    status
+    stateTotals
+    treeDepth
+    tasks(ids: \$tIds, mindepth: \$minDepth, maxdepth: \$maxDepth){
+      name
+      meta {
+        title
+        description
+        URL
+        userDefined
+      }
+      proxies(ids: \$nIds, states: \$nStates){
+        cyclePoint
+        state
+        isHeld
+      }
+    }
+  }
+}",
+"variables": {
+    "wIds": ["*${ID_DELIM}${1}"],
+    "nIds": ["20*${ID_DELIM}*"],
+    "tIds": ["*"],
+    "nStates": ["succeeded", "waiting", "running"],
+    "minDepth": 0,
+    "maxDepth": 4
+  }
+}
+_args_
+
+read -r -d '' edgesAll <<_args_
+{"request_string": "
+fragment tProxy on TaskProxy {
+  state
+}
+
+fragment fProxy on FamilyProxy {
+  state
+}
+
+query {
+  edges(workflows: [\"*${ID_DELIM}${1}\"]) {
+    source
+    sourceNode {
+      ...tProxy
+      ...fProxy
+    }
+    target
+    targetNode {
+      ...tProxy
+      ...fProxy
+    }
+    cond
+    suicide
+  }
+}",
+"variables": null}
+_args_
+
+read -r -d '' simple <<_args_
+{
+  "request_string": "
+query {
+  workflows{
+    id
+    oldestCyclePoint
+    newestCyclePoint
+    newestRunaheadCyclePoint
+    lastUpdated
+    tasks{
+      name
+      meanElapsedTime
+    }
+    taskProxies {
+      id
+      state
+    }
+  }
+  jobs(workflows: [\"${1}\"]) {
+    id
+    state
+  }
+}",
+"variables": null
+}
+_args_
+
+read -r -d '' simple2 <<_args_
+{
+  "request_string": "
+query {
+  workflows{
+    id
+    oldestCyclePoint
+    newestCyclePoint
+    newestRunaheadCyclePoint
+    lastUpdated
+    isHeldTotal
+    states
+    stateTotals
+    tasks{
+      name
+      meanElapsedTime
+    }
+    families{
+      name
+    }
+    familyProxies(isHeld: false) {
+      id
+      state
+      isHeld
+    }
+    taskProxies(isHeld: false) {
+      id
+      state
+      isHeld
+    }
+    nodesEdges(ids: [\"foo\"], distance: ${DISTANCE}) {
+      nodes {
+        id
+        state
+      }
+      edges {
+        id
+        source
+        target
+      }
+    }
+  }
+  jobs(workflows: [\"${1}\"]) {
+    id
+    state
+  }
+}",
+"variables": null
+}
+_args_
+
+read -r -d '' rootQueries <<_args_
+{
+  "request_string": "
+query {
+  workflows(ids: [\"*${ID_DELIM}${1}:running\"]) {
+    id
+  }
+  job(id: \"${USER}${ID_DELIM}${1}${ID_DELIM}20190101T00${ID_DELIM}foo${ID_DELIM}1\") {
+    id
+  }
+  jobs(workflows: [\"*${ID_DELIM}*\"], ids: [\"*${ID_DELIM}*${ID_DELIM}1\"], sort: {keys: [\"id\"], reverse: false}) {
+    id
+  }
+  task(id: \"${USER}${ID_DELIM}${1}${ID_DELIM}foo\") {
+    id
+  }
+  tasks(sort: {keys: [\"id\"], reverse: false}) {
+    id
+  }
+  taskProxy(id: \"${USER}${ID_DELIM}${1}${ID_DELIM}20190101T00${ID_DELIM}foo\") {
+    id
+  }
+  taskProxies(workflows: [\"*${ID_DELIM}*\"], ids: [\"*${ID_DELIM}*\"], sort: {keys: [\"id\"], reverse: false}) {
+    id
+  }
+  family(id: \"${USER}${ID_DELIM}${1}${ID_DELIM}FAM\") {
+    id
+  }
+  families(sort: {keys: [\"id\"], reverse: false}) {
+    id
+  }
+  familyProxy(id: \"${USER}${ID_DELIM}${1}${ID_DELIM}20190101T00${ID_DELIM}FAM\") {
+    id
+  }
+  familyProxies(workflows: [\"*${ID_DELIM}*\"], ids: [\"20190101T00${ID_DELIM}FAM2\"], sort: {keys: [\"id\"], reverse: false}) {
+    id
+  }
+  edges(workflows: [\"${USER}${ID_DELIM}${1}\"], sort: {keys: [\"id\"], reverse: false}) {
+    id
+  }
+  nodesEdges(workflows: [\"*${ID_DELIM}*\"], ids: [\"foo\"], distance: 1) {
+    nodes {
+      id
+    }
+    edges {
+      id
+    }
+  }
+}",
+"variables": null
+}
+_args_
+
+read -r -d '' nodesEdges <<_args_
+{
+  "request_string": "
+query {
+  nodesEdges(workflows: [\"${1}\"], ids: [\"foo\"], distance: ${DISTANCE}, sort: {keys: [\"state\", \"id\"], reverse: false}) {
+    nodes {
+      id
+      state
+    }
+    edges {
+      id
+    }
+  }
+}",
+"variables": null
+}
+_args_
+
+read -r -d '' nodesEdges2 <<_args_
+{
+  "request_string": "
+fragment tProxy on TaskProxy {
+  state
+  cyclePoint
+  latestMessage
+  jobs {
+    id
+    state
+    host
+    batchSysName
+    batchSysJobId
+    submittedTime
+    startedTime
+    finishedTime
+    submitNum
+  }
+}
+
+fragment fProxy on FamilyProxy {
+  state
+  cyclePoint
+}
+
+query {
+  nodesEdges(workflows: [\"${1}\"], ids: [\"foo\"], distance: ${DISTANCE}, sort: {keys: [\"state\", \"id\"], reverse: false}) {
+    nodes {
+      id
+      state
+    }
+    edges {
+      id
+      sourceNode{
+        ...tProxy
+        ...fProxy
+      }
+      targetNode{
+        ...tProxy
+        ...fProxy
+      }
+    }
+  }
+}",
+"variables": null
+}
+_args_
+
+# Mutation Requests
+read -r -d '' stop <<_args_
+{"request_string": "
+mutation {
+  stopWorkflow(
+      command: \"set_stop_after_clock_time\",
+      workflows: [\"${1}\"],
+      args: {datetimeString: \"2019-05-30T21:24:06+12:00\"}) {
+    result
+  }
+}",
+"variables": null}
+_args_
+
+read -r -d '' hold <<_args_
+{"request_string": "
+mutation{
+  holdWorkflow(workflows: [\"${1}\"]) {
+    result
+  }
+}",
+"variables": null}
+_args_
+
+read -r -d '' holdPoint <<_args_
+{"request_string": "
+mutation{
+  holdWorkflow(
+      command: \"hold_after_point_string\",
+      workflows: [\"${1}\"],
+      pointString: \"20170501T0000+12\") {
+    result
+  }
+}",
+"variables": null}
+_args_
+
+read -r -d '' release <<_args_
+{"request_string": "
+mutation {
+  releaseWorkflow(workflows: [\"${1}\"]){
+    result
+  }
+}
+",
+"variables": null}
+_args_
+
+read -r -d '' putBroadcast <<_args_
+{"request_string": "
+mutation{
+  putBroadcast(workflows: [\"${1}\"], namespaces: [\"foo\"], settings: [{environment: {DANGER: \"Dr Robertson\"}}]) {
+    result
+  }
+}",
+"variables": null}
+_args_
+
+read -r -d '' clearBroadcast <<_args_
+{"request_string": "
+mutation{
+  clearBroadcast(
+      workflows: [\"${1}\"],
+      namespaces: [\"foo\"],
+      cancelSettings: [{environment: {DANGER: \"Dr Robertson\"}}]) {
+    result
+  }
+}
+",
+"variables": null}
+_args_
+
+read -r -d '' putMessages <<_args_
+{"request_string": "
+mutation {
+  putMessages(
+      workflows: [\"${1}\"],
+      ids: [\"20170101T0000+12${ID_DELIM}foo${ID_DELIM}01\"],
+      messages: [[\"CRITICAL\", \"HELLO, IS THERE ANYONE OUT THERE?\"]]) {
+    result
+  }
+}
+",
+"variables": null}
+_args_
+
+read -r -d '' insertTasks <<_args_
+{"request_string": "
+mutation {
+  taskActions(
+      command: \"insert_tasks\",
+      workflows: [\"${1}\"],
+      ids: [\"20170501T0000+12${ID_DELIM}foo\"]) {
+    result
+  }
+}
+",
+"variables": null}
+_args_
+
+read -r -d '' triggerTasks <<_args_
+{"request_string": "
+mutation {
+  taskActions(
+      command: \"trigger_tasks\",
+      workflows: [\"${1}\"],
+      ids: [\"20170*${ID_DELIM}foo:succeeded\"]) {
+    result
+  }
+}",
+"variables": null}
+_args_
+
+
+# Invoke command with given request
+echo "${!2}"
+time cylc client $1 graphql < <(echo ${!2})
