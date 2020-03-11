@@ -3,7 +3,8 @@
 # wsgraphql <workflow_name> <request_args_name>
 
 ID_DELIM='|'
-DISTANCE=${3:-1}
+ID_ARG=${3:-"foo"}
+EXTRA_ARG=${4:-1}
 
 # Query requests
 read -r -d '' treeView <<_args_
@@ -66,6 +67,24 @@ query tree(\$wIds: [ID], \$nIds: [ID], \$nStates: [String], \$minDepth: Int, \$m
     "nStates": ["succeeded", "waiting", "held", "running"],
     "minDepth": 0,
     "maxDepth": 4
+  }
+}
+_args_
+
+
+read -r -d '' pingTest <<_args_
+{
+  "request_string": "
+query (\$wIds: [ID], \$nIds: [ID]) {
+  taskProxies (workflows: \$wIds, ids: \$nIds) {
+    id
+    state
+  }
+}",
+"variables": {
+    "wIds": ["*${ID_DELIM}${1}"],
+    "nIds": ["*|foo"],
+    "nId": "sutherlander|baz|12340101T0101+13|bar"
   }
 }
 _args_
@@ -209,6 +228,7 @@ query {
     taskProxies {
       id
       state
+      latestMessage
     }
   }
   jobs(workflows: [\"${1}\"]) {
@@ -245,12 +265,13 @@ query {
       state
       isHeld
     }
-    taskProxies(isHeld: false) {
+    taskProxies(isHeld: true) {
       id
       state
       isHeld
+      latestMessage
     }
-    nodesEdges(ids: [\"foo\"], distance: ${DISTANCE}) {
+    nodesEdges(ids: [\"${ID_ARG}\"], distance: ${EXTRA_ARG}) {
       nodes {
         id
         state
@@ -328,7 +349,7 @@ read -r -d '' nodesEdges <<_args_
 {
   "request_string": "
 query {
-  nodesEdges(workflows: [\"${1}\"], ids: [\"foo\"], distance: ${DISTANCE}, sort: {keys: [\"state\", \"id\"], reverse: false}) {
+  nodesEdges(workflows: [\"${1}\"], ids: [\"${ID_ARG}\"], distance: ${EXTRA_ARG}, sort: {keys: [\"state\", \"id\"], reverse: false}) {
     nodes {
       id
       state
@@ -368,7 +389,7 @@ fragment fProxy on FamilyProxy {
 }
 
 query {
-  nodesEdges(workflows: [\"${1}\"], ids: [\"foo\"], distance: ${DISTANCE}, sort: {keys: [\"state\", \"id\"], reverse: false}) {
+  nodesEdges(workflows: [\"${1}\"], ids: [\"${ID_ARG}\"], distance: ${EXTRA_ARG}, sort: {keys: [\"state\", \"id\"], reverse: false}) {
     nodes {
       id
       state
@@ -397,7 +418,7 @@ mutation {
   stopWorkflow(
       command: \"set_stop_after_clock_time\",
       workflows: [\"${1}\"],
-      args: {datetimeString: \"2019-05-30T21:24:06+12:00\"}) {
+      args: {datetimeString: \"2019-09-29T09:29:06+12:00\"}) {
     result
   }
 }",
