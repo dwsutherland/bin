@@ -230,6 +230,11 @@ query {
       state
       latestMessage
     }
+    familyProxies {
+      id
+      state
+      states
+    }
   }
   jobs(workflows: [\"${1}\"]) {
     id
@@ -243,8 +248,8 @@ _args_
 read -r -d '' simple2 <<_args_
 {
   "request_string": "
-query {
-  workflows{
+query workflows(\$stripNull: Boolean) {
+  workflows (stripNull: \$stripNull){
     id
     oldestCyclePoint
     newestCyclePoint
@@ -260,12 +265,15 @@ query {
     families{
       name
     }
-    familyProxies(isHeld: false) {
+    familyProxies {
       id
       state
+      states
+      stateTotals
       isHeld
+      isHeldTotal
     }
-    taskProxies(isHeld: true) {
+    taskProxies(stripNull: false) {
       id
       state
       isHeld
@@ -283,12 +291,14 @@ query {
       }
     }
   }
-  jobs(workflows: [\"${1}\"]) {
+  jobs(workflows: [\"${1}\"], stripNull: true) {
     id
     state
   }
 }",
-"variables": null
+"variables": {
+    "stripNull": false
+  }
 }
 _args_
 
@@ -411,6 +421,68 @@ query {
 }
 _args_
 
+
+read -r -d '' show <<_args_
+{
+  "request_string": "
+query flatTree(\$wIds: [ID], \$tIds: [ID], \$nIds: [ID], \$nStates: [String], \$minDepth: Int, \$maxDepth: Int) {
+  workflows(ids: \$wIds) {
+    id
+    name
+    meta {
+      title
+      description
+      URL
+      userDefined
+    }
+    tasks(ids: \$tIds, mindepth: \$minDepth, maxdepth: \$maxDepth){
+      name
+      meta {
+        title
+        description
+        URL
+        userDefined
+      }
+    }
+    taskProxies(ids: \$nIds, states: \$nStates){
+      name
+      cyclePoint
+      state
+      isHeld
+      prerequisites {
+        expression
+        conditions {
+          exprAlias
+          taskId
+          taskProxy {
+            name
+            cyclePoint
+          }
+          reqState
+          message
+          satisfied
+        }
+        satisfied
+      }
+      outputs
+      extras
+    }
+  }
+}",
+"variables": {
+    "wIds": ["*${ID_DELIM}${1}"],
+    "nIds": ["20*${ID_DELIM}*"],
+    "tIds": ["*"],
+    "nStates": [],
+    "minDepth": 0,
+    "maxDepth": 4
+  }
+}
+_args_
+
+
+
+
 # Mutation Requests
 read -r -d '' stop <<_args_
 {"request_string": "
@@ -428,7 +500,7 @@ _args_
 read -r -d '' hold <<_args_
 {"request_string": "
 mutation{
-  holdWorkflow(workflows: [\"${1}\"]) {
+  hold(workflows: [\"${1}\"]) {
     result
   }
 }",
@@ -451,7 +523,7 @@ _args_
 read -r -d '' release <<_args_
 {"request_string": "
 mutation {
-  releaseWorkflow(workflows: [\"${1}\"]){
+  release(workflows: [\"${1}\"]){
     result
   }
 }
@@ -521,6 +593,18 @@ mutation {
     result
   }
 }",
+"variables": null}
+_args_
+
+n_edge_distance=${3:-0}
+read -r -d '' setGraphWindowExtent <<_args_
+{"request_string": "
+mutation {
+  setGraphWindowExtent(workflows: [\"${1}\"], nEdgeDistance: ${n_edge_distance}){
+    result
+  }
+}
+",
 "variables": null}
 _args_
 
